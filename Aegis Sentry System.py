@@ -1,160 +1,218 @@
+import os
 import cv2
-import numpy as np
 import time
 import threading
-import os
+import numpy as np
+import pyttsx3
 import speech_recognition as sr
-import webbrowser
 from datetime import datetime
-from gtts import gTTS
-from pygame import mixer
+from ultralytics import YOLO
 
-class AirDefenceAI:
+# Stability Environment Variables
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+class AegisElite:
     def __init__(self):
-        mixer.init()
-        self.cmd = None
-        self.force_alert = False # Manual lockdown override
+        # --- 1. HUD & TRACKING SETTINGS ---
+        self.active = True
+        self.force_alert = False
+        self.scan_active = False
+        self.scan_line_y = 0
+        self.max_threat_speed = 0
+        self.tracker = {}
         
-        # Audio Manifest
-        self.audio_files = {
-            "boot": "Air defense system active. Tracking and monitoring protocols engaged. Good evening, Sir.",
-            "scan": "Initiating deep structural scan. Analyzing perimeter for hostiles.",
-            "danger": "Hostile intent detected. Sir, I recommend immediate action.",
-            "normal": "Scan complete. No hostile signatures found.",
-            "sus": "Sir, I have detected a suspicious presence.",
-            "clear": "Perimeter is secure. All systems nominal.",
-            "off": "Powering down systems. Goodbye, Sir.",
-            "google": "Accessing the global network, Sir.",
-            "report": "All air defense sub-systems are operational. Energy at one hundred percent.",
-            "lockdown": "Protocol initiated. Full perimeter lockdown in effect.",
-            "reset": "Alert cleared. Returning to standard monitoring."
-        }
-        self.sync_voice()
+        # --- 2. SECURITY PROTOCOLS ---
+        self.authorized = False
+        self.auth_code = "2468"  # Set your custom verbal code
+        self.awaiting_code = False
+        
+        # --- 3. VISION & AUDIO SETUP ---
+        self.model = YOLO('yolov8n.pt')  # Ensure yolov8n.pt is in the same folder
+        self.cap = cv2.VideoCapture(0)
+        
+        # Colors (BGR)
+        self.CYAN = (255, 255, 0)
+        self.RED = (0, 0, 255)
+        self.AMBER = (0, 165, 255)
+        self.GREEN = (0, 255, 0)
 
-    def sync_voice(self):
-        for key, text in self.audio_files.items():
-            if not os.path.exists(f"{key}.mp3"):
-                gTTS(text=text, lang='en', tld='co.uk').save(f"{key}.mp3")
+    def speak(self, text):
+        """Thread-safe isolated speech engine to prevent HUD lag."""
+        print(f"FRIDAY: {text}")
+        def say_task():
+            try:
+                # Re-initializing inside thread for absolute stability
+                engine = pyttsx3.init('sapi5')
+                engine.setProperty('rate', 195)
+                voices = engine.getProperty('voices')
+                if len(voices) > 1: engine.setProperty('voice', voices[1].id)
+                engine.say(text)
+                engine.runAndWait()
+            except Exception as e:
+                print(f"Speech Loop Error: {e}")
 
-    def speak(self, key):
-        if mixer.music.get_busy(): mixer.music.stop()
-        mixer.music.load(f"{key}.mp3")
-        mixer.music.play()
+        threading.Thread(target=say_task, daemon=True).start()
 
     def voice_engine(self):
-        recognizer = sr.Recognizer()
+        """Tactical Command Module with Security Authorization."""
+        r = sr.Recognizer()
+        r.energy_threshold = 150 # High sensitivity
+        
         with sr.Microphone() as source:
-            recognizer.adjust_for_ambient_noise(source, duration=2)
-            while True:
+            r.adjust_for_ambient_noise(source, duration=1)
+            print("--- AEGIS MARK X: VOICE MODULE ONLINE ---")
+            
+            while self.active:
                 try:
-                    audio = recognizer.listen(source, timeout=None, phrase_time_limit=3)
-                    text = recognizer.recognize_google(audio).lower()
-                    print(f"COMM_LOG: {text}")
-                    
-                    if "jarvis" in text:
-                        if "scan" in text: self.cmd = "SCAN"
-                        elif "status" in text: self.cmd = "STATUS"
-                        elif "shutdown" in text: self.cmd = "SHUTDOWN"
-                        elif "time" in text: self.cmd = "TIME"
-                        elif "google" in text: self.cmd = "GOOGLE"
-                        elif "report" in text: self.cmd = "REPORT"
-                        elif "level 5" in text or "lockdown" in text: self.cmd = "ALERT_ON"
-                        elif "clear" in text or "reset" in text: self.cmd = "ALERT_OFF"
+                    audio = r.listen(source, timeout=None, phrase_time_limit=4)
+                    cmd = r.recognize_google(audio).lower()
+                    print(f"TACTICAL INPUT >> {cmd}")
+
+                    if "friday" in cmd:
+                        # SECURITY CHECK: If waiting for code
+                        if self.awaiting_code:
+                            if self.auth_code in cmd:
+                                self.authorized = True
+                                self.awaiting_code = False
+                                self.speak("Authorization confirmed. Accessing tactical arrays.")
+                            else:
+                                self.speak("Authentication failed. Security lock remains active.")
+                                self.awaiting_code = False
+                            continue
+
+                        # --- AUTHORIZATION REQUIRED COMMANDS ---
+                        restricted_cmds = ["lockdown", "arm", "weapons", "reboot", "disarm"]
+                        if any(word in cmd for word in restricted_cmds):
+                            if not self.authorized:
+                                self.speak("Access denied. Please provide your authorization code.")
+                                self.awaiting_code = True
+                                continue
+                            
+                            # Execute restricted logic
+                            if "lockdown" in cmd:
+                                self.force_alert = True
+                                self.speak("Protocol Level 5. Full perimeter lockdown.")
+                            elif "arm" in cmd:
+                                self.speak("Defensive batteries armed and tracking.")
+                            elif "disarm" in cmd:
+                                self.authorized = False
+                                self.force_alert = False
+                                self.speak("Systems disarmed. Security lock re-engaged.")
+
+                        # --- UNRESTRICTED COMMANDS (25+ EXPANDED) ---
+                        elif "status" in cmd: self.speak(f"Systems are {'Tactical' if self.authorized else 'Secure'}. All system are in stand by , alll weapons and radar are 100% in good condition.")
+                        elif "scan" in cmd: 
+                            self.scan_active = True
+                            self.speak("Initiating deep structural scan.")
+                        elif "clear" in cmd: 
+                            self.scan_active = False
+                            self.force_alert = False
+                            self.speak("Scan clear. Returning to standby.")
+                        elif "report" in cmd: self.speak(f"Peak intruder velocity recorded at {self.max_threat_speed} units.")
+                        elif "time" in cmd: self.speak(f"Sir, the time is {datetime.now().strftime('%I:%M %p')}.")
+                        elif "radar" in cmd: self.speak("Radar arrays synchronized with orbital platform.")
+                        elif "thermal" in cmd: self.speak("Thermal filters active. Scanning for heat signatures.")
+                        elif "identify" in cmd: self.speak("Subject analysis: Unknown biological signature.")
+                        elif "coordinates" in cmd: self.speak("Triangulating GPS position. Signal strength optimal.")
+                        elif "energy" in cmd: self.speak("Energy levels nominal. No depletion detected.")
+                        elif "weather" in cmd: self.speak("Atmospheric pressure is dropping. Stay alert.")
+                        elif "diagnostic" in cmd: self.speak("Integrity check complete. All sub-systems 100 percent.")
+                        elif "shield" in cmd: self.speak("Plasma shields deployed at 80 percent.")
+                        elif "analyse" in cmd: self.speak("Analyzing movement patterns. Subject appears hostile.")
+                        elif "shutdown" in cmd: 
+                            self.speak("Safe journey, Boss.")
+                            self.active = False
+                            os._exit(0)
+                        else: self.speak("Standing by, Boss.")
                 except: continue
 
-def main():
-    cap = cv2.VideoCapture(0)
-    ai = AirDefenceAI()
-    fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50)
-    
-    threading.Thread(target=ai.voice_engine, daemon=True).start()
-    ai.speak("boot")
+    def run(self):
+        threading.Thread(target=self.voice_engine, daemon=True).start()
+        self.speak("Aegis systems online. Friday is standing by.")
 
-    while True:
-        ret, frame = cap.read()
-        if not ret: break
-        frame = cv2.flip(frame, 1)
-        h, w = frame.shape[:2]
-        display = frame.copy()
+        while self.active:
+            success, frame = self.cap.read()
+            if not success: break
+            
+            frame = cv2.flip(frame, 1)
+            h, w = frame.shape[:2]
+            results = self.model(frame, conf=0.4, verbose=False)
+            curr_t = time.time()
+            
+            # Base UI State
+            is_danger = self.force_alert
+            hud_col = self.RED if is_danger else self.CYAN
 
-        # --- DETECTION ENGINE ---
-        fgmask = fgbg.apply(frame)
-        contours, _ = cv2.findContours(fgmask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        target = None
-        threat_level = 0
-        for c in contours:
-            area = cv2.contourArea(c)
-            if area > 5000:
-                target = cv2.boundingRect(c)
-                threat_level = min(100, int((area/(w*h))*400))
-                break
+            # 1. SCANNER ANIMATION
+            if self.scan_active:
+                self.scan_line_y = (self.scan_line_y + 15) % h
+                cv2.line(frame, (0, self.scan_line_y), (w, self.scan_line_y), self.CYAN, 2)
+                overlay = frame.copy()
+                cv2.rectangle(overlay, (0, self.scan_line_y - 20), (w, self.scan_line_y), self.CYAN, -1)
+                cv2.addWeighted(overlay, 0.1, frame, 0.9, 0, frame)
 
-        # --- COMMAND LOGIC ---
-        if ai.cmd == "TIME":
-            now = datetime.now().strftime("%I:%M %p")
-            ai.speak("clear") # Notification sound
-            print(f"SYSTEM TIME: {now}")
-            ai.cmd = None
+            # 2. OBJECT TRACKING
+            for r in results:
+                for box in r.boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    label = self.model.names[int(box.cls[0])]
+                    
+                    if label in ['person', 'car', 'drone']:
+                        center = ((x1+x2)//2, (y1+y2)//2)
+                        obj_id = f"{label}_{center[0]//50}"
+                        
+                        speed = 0
+                        target_col = self.CYAN
+                        
+                        if obj_id in self.tracker:
+                            px, py, pt = self.tracker[obj_id]
+                            dist = np.sqrt((center[0]-px)**2 + (center[1]-py)**2)
+                            dt = curr_t - pt
+                            if dt > 0:
+                                speed = int((dist/dt) * 0.5)
+                                if speed > self.max_threat_speed: self.max_threat_speed = speed
+                                
+                                if speed > 40 or self.force_alert: 
+                                    target_col = self.RED
+                                    hud_col = self.RED
+                                    is_danger = True
+                                elif speed > 15: target_col = self.AMBER
 
-        elif ai.cmd == "GOOGLE":
-            ai.speak("google")
-            webbrowser.open("https://www.google.com")
-            ai.cmd = None
+                        self.tracker[obj_id] = (center[0], center[1], curr_t)
+                        
+                        # Tactical Reticle Design
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), target_col, 1)
+                        l = 25 # Corner length
+                        cv2.line(frame, (x1, y1), (x1+l, y1), target_col, 3)
+                        cv2.line(frame, (x1, y1), (x1, y1+l), target_col, 3)
+                        cv2.putText(frame, f"TRGT_{label.upper()}: {speed} units", (x1, y1-10), 0, 0.4, target_col, 1)
 
-        elif ai.cmd == "REPORT":
-            ai.speak("report")
-            ai.cmd = None
+            # 3. HUD OVERLAY
+            if is_danger and int(time.time() * 5) % 2 == 0:
+                cv2.rectangle(frame, (5, 5), (w-5, h-5), self.RED, 10) # Alert Pulse
 
-        elif ai.cmd == "ALERT_ON":
-            ai.speak("lockdown")
-            ai.force_alert = True
-            ai.cmd = None
+            # Security Indicator
+            auth_text = "AUTHORIZED" if self.authorized else "LOCKED"
+            auth_col = self.GREEN if self.authorized else self.RED
+            cv2.putText(frame, f"SECURITY_BRIDGE: {auth_text}", (30, 40), 0, 0.5, auth_col, 2)
 
-        elif ai.cmd == "ALERT_OFF":
-            ai.speak("reset")
-            ai.force_alert = False
-            ai.cmd = None
+            # System Data
+            cv2.rectangle(frame, (10, 10), (w-10, h-10), hud_col, 1)
+            cv2.putText(frame, f"AEGIS_STATUS: {'DANGER' if is_danger else 'SECURE'}", (30, h-30), 0, 0.5, hud_col, 1)
+            cv2.putText(frame, f"PEAK_VELOCITY: {self.max_threat_speed}", (w-200, h-30), 0, 0.5, hud_col, 1)
 
-        # --- HUD RENDERING ---
-        is_danger = threat_level > 35 or ai.force_alert
-        col = (0, 0, 255) if is_danger else (0, 255, 255)
-        
-        # Pulsing outer frame
-        thick = 2 if not is_danger else int(2 + np.sin(time.time()*10)*2)
-        cv2.rectangle(display, (10, 10), (w-10, h-10), col, max(1, thick))
-        
-        if target:
-            x, y, cw, ch = target
-            cv2.drawMarker(display, (x+cw//2, y+ch//2), col, cv2.MARKER_CROSS, 40, 2)
-            cv2.putText(display, f"THREAT_LVL: {threat_level}%", (x, y-10), 0, 0.5, col, 2)
+            # Auth Prompt Overlay
+            if self.awaiting_code:
+                overlay = frame.copy()
+                cv2.rectangle(overlay, (w//2-100, h//2-30), (w//2+100, h//2+30), (0,0,0), -1)
+                cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+                cv2.putText(frame, "AWAITING AUTH CODE", (w//2-85, h//2+5), 0, 0.5, (0, 255, 255), 1)
 
-        if ai.cmd == "SCAN":
-            ai.speak("scan")
-            for i in range(15):
-                ly = int((time.time()*500 + i*30) % h)
-                cv2.line(display, (0, ly), (w, ly), (0, 255, 255), 1)
-            time.sleep(1)
-            ai.speak("danger" if threat_level > 35 else "normal")
-            ai.cmd = None
+            cv2.imshow("AEGIS DEFENCE SYSTEM", frame)
+            if cv2.waitKey(1) == ord('q'): break
 
-        elif ai.cmd == "STATUS":
-            ai.speak("sus" if target else "clear")
-            ai.cmd = None
-
-        elif ai.cmd == "SHUTDOWN":
-            ai.speak("off")
-            time.sleep(2)
-            break
-
-        # Status HUD Text
-        cv2.putText(display, f"SYSTEM_MODE: {'LOCKDOWN' if ai.force_alert else 'TRACKING'}", (20, h-20), 0, 0.4, col, 1)
-
-        cv2.imshow("AIR DEFENCE SYSTEM", display)
-        if cv2.waitKey(1) == ord('q'): break
-
-    cap.release()
-    cv2.destroyAllWindows()
+        self.cap.release()
+        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    main()
+    AegisElite().run()
